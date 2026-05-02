@@ -11,6 +11,55 @@ from huggingface_hub import hf_hub_download
 _CODEC_DEFAULT = object()
 
 
+def _cuda_arch_name(device: str | torch.device) -> str | None:
+    resolved = torch.device(device)
+    if resolved.type != "cuda" or not torch.cuda.is_available():
+        return None
+    index = torch.cuda.current_device() if resolved.index is None else int(resolved.index)
+    major, minor = torch.cuda.get_device_capability(index)
+    return f"sm_{major}{minor}"
+
+
+def _cuda_arch_is_in_torch_build(device: str | torch.device) -> bool:
+    arch = _cuda_arch_name(device)
+    if arch is None:
+        return True
+    try:
+        return arch in set(torch.cuda.get_arch_list())
+    except Exception:
+        return True
+
+
+def _patch_dacvae_snake_for_unsupported_cuda(device: str | torch.device) -> None:
+    if _cuda_arch_is_in_torch_build(device):
+        return
+
+    try:
+        from dacvae.nn import layers
+    except Exception:
+        return
+
+    if bool(getattr(layers, "_irodori_eager_snake_patch", False)):
+        return
+
+    def _snake_eager(x: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
+        shape = x.shape
+        x = x.reshape(shape[0], shape[1], -1)
+        x = x + (alpha + 1e-9).reciprocal() * torch.sin(alpha * x).pow(2)
+        x = x.reshape(shape)
+        return x
+
+    layers.snake = _snake_eager
+    layers._irodori_eager_snake_patch = True
+    arch = _cuda_arch_name(device)
+    supported = ", ".join(torch.cuda.get_arch_list())
+    print(
+        f"[codec] CUDA arch {arch} is not in this PyTorch build arch list "
+        f"({supported}); using eager DACVAE Snake activation to avoid TorchScript NVRTC failure.",
+        flush=True,
+    )
+
+
 def patchify_latent(latent: torch.Tensor, patch_size: int) -> torch.Tensor:
     """
     Convert latent from (B, T, D) -> (B, T//patch, D*patch).
@@ -67,6 +116,7 @@ class DACVAECodec:
             if local_repo.exists():
                 sys.path.insert(0, str(local_repo))
             from dacvae import DACVAE
+        _patch_dacvae_snake_for_unsupported_cuda(device)
 
         location = str(repo_id).strip()
         if location.startswith("hf://"):

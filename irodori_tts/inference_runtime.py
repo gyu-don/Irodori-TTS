@@ -950,8 +950,15 @@ def save_wav(path: str | Path, audio: torch.Tensor, sample_rate: int) -> Path:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         torchaudio.save(str(out_path), audio, sample_rate)
-    except RuntimeError:
+    except (ImportError, RuntimeError):
         import soundfile as sf
 
-        sf.write(str(out_path), audio.squeeze(0).numpy(), sample_rate)
+        wav = audio.detach().cpu().to(torch.float32)
+        if wav.ndim == 1:
+            data = wav.numpy()
+        elif wav.ndim == 2:
+            data = wav[0].numpy() if wav.shape[0] == 1 else wav.transpose(0, 1).numpy()
+        else:
+            raise ValueError(f"Expected audio ndim 1 or 2, got shape={tuple(audio.shape)}")
+        sf.write(str(out_path), data, sample_rate)
     return out_path
