@@ -933,7 +933,7 @@ def clear_cached_runtime() -> None:
 def _load_audio(path: str | Path) -> tuple[torch.Tensor, int]:
     try:
         return torchaudio.load(str(path))
-    except RuntimeError:
+    except (ImportError, RuntimeError):
         import soundfile as sf
 
         data, sr = sf.read(str(path), dtype="float32")
