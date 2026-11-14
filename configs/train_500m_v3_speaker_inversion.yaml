@@ -90,7 +90,7 @@ train:
   valid_every: 0
 
   wandb_enabled: false
-  wandb_project: 
+  wandb_project:
   wandb_entity:
   wandb_run_name:
   wandb_mode: online

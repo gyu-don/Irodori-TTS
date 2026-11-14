@@ -18,6 +18,7 @@ import torch
 import torchaudio
 from safetensors import safe_open
 from safetensors.torch import load_file as load_safetensors_file
+from transformers.initialization import no_init_weights
 
 from .codec import DACVAECodec, patchify_latent, unpatchify_latent
 from .config import ModelConfig, merge_dataclass_overrides
@@ -98,6 +99,10 @@ def default_runtime_device() -> str:
 
 def list_available_runtime_precisions(device: str | torch.device) -> list[str]:
     resolved = resolve_runtime_device(device)
+    # GB10 benefits from BF16 Tensor Cores in both the DiT and DACVAE.
+    # FP32 remains selectable; other devices retain their previous defaults.
+    if resolved.type == "cuda" and torch.cuda.get_device_capability(resolved) == (12, 1):
+        return ["bf16", "fp32"]
     if resolved.type in ("cuda", "xpu"):
         return ["fp32", "bf16"]
     return ["fp32"]
@@ -379,21 +384,23 @@ def _move_inference_module(
     device: torch.device,
     dtype: torch.dtype,
 ) -> torch.nn.Module:
-    module.to(device=device)
+    # Cast on the source device before moving to the inference device. This
+    # also releases a safetensors FP32 mapping before allocating CUDA memory,
+    # particularly important on GB10's shared system memory.
     with torch.no_grad():
         for param in module.parameters():
             if param.is_floating_point() and param.dtype != dtype:
-                param.data = param.data.to(device=device, dtype=dtype)
+                param.data = param.data.to(dtype=dtype)
                 if param.grad is not None:
-                    param.grad.data = param.grad.data.to(device=device, dtype=dtype)
+                    param.grad.data = param.grad.data.to(dtype=dtype)
         for child in module.modules():
             for name, buffer in child._buffers.items():
                 if buffer is None:
                     continue
                 if buffer.is_floating_point() and buffer.dtype != dtype:
-                    child._buffers[name] = buffer.to(device=device, dtype=dtype)
-                elif buffer.device != device:
-                    child._buffers[name] = buffer.to(device=device)
+                    child._buffers[name] = buffer.to(dtype=dtype)
+    # Preserve complex buffers (RoPE) and quantized/integer parameter dtypes.
+    module.to(device=device)
     return module
 
 
@@ -741,17 +748,20 @@ class InferenceRuntime:
             section="checkpoint model_config",
         )
 
-        model = TextToLatentRFDiT(
-            model_cfg,
-            pretrained_backbone_config=text_encoder_config,
-            load_pretrained_backbone_weights=not model_cfg.use_pretrained_text_encoder,
-        )
+        # Every weight is replaced by the checkpoint. Avoid initializing a
+        # second full FP32 model, which consumes shared RAM and allocator cache.
+        with no_init_weights():
+            model = TextToLatentRFDiT(
+                model_cfg,
+                pretrained_backbone_config=text_encoder_config,
+                load_pretrained_backbone_weights=not model_cfg.use_pretrained_text_encoder,
+            )
         quantized_model = is_torchao_quantized_state_dict(model_state)
         model.load_state_dict(
             model_state,
             assign=model_cfg.use_pretrained_text_encoder or quantized_model,
         )
-        model = model.to(model_device)
+        del model_state
         model = _move_inference_module(model, device=model_device, dtype=model_dtype)
         model.eval()
         model = _maybe_compile_inference_model(
@@ -1887,7 +1897,7 @@ def _reference_latent_key(
 def _load_audio(path: str | Path) -> tuple[torch.Tensor, int]:
     try:
         return torchaudio.load(str(path))
-    except RuntimeError:
+    except (ImportError, RuntimeError):
         import soundfile as sf
 
         data, sr = sf.read(str(path), dtype="float32")
@@ -1905,9 +1915,18 @@ def save_wav(path: str | Path, audio: torch.Tensor, sample_rate: int) -> Path:
     audio_cpu = audio.detach().to(device="cpu", dtype=torch.float32)
     try:
         torchaudio.save(str(out_path), audio_cpu, sample_rate)
-    except RuntimeError:
+    except (ImportError, RuntimeError):
         import soundfile as sf
 
-        audio_np = audio_cpu.squeeze(0).numpy() if audio_cpu.shape[0] == 1 else audio_cpu.T.numpy()
+        if audio_cpu.ndim == 1:
+            audio_np = audio_cpu.numpy()
+        elif audio_cpu.ndim == 2:
+            audio_np = (
+                audio_cpu.squeeze(0).numpy() if audio_cpu.shape[0] == 1 else audio_cpu.T.numpy()
+            )
+        else:
+            raise ValueError(
+                f"Expected audio ndim 1 or 2, got shape={tuple(audio_cpu.shape)}"
+            ) from None
         sf.write(str(out_path), audio_np, sample_rate)
     return out_path

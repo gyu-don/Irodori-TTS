@@ -11,6 +11,7 @@ from irodori_tts.inference_runtime import (
     SamplingRequest,
     default_runtime_device,
     download_hf_checkpoint,
+    list_available_runtime_precisions,
     resolve_cfg_scales,
     save_wav,
 )
@@ -97,8 +98,8 @@ def main() -> None:
     parser.add_argument(
         "--model-precision",
         choices=["fp32", "bf16"],
-        default="fp32",
-        help="Model precision for weights/compute.",
+        default=None,
+        help="Model precision for weights/compute (default: bf16 on GB10, fp32 elsewhere).",
     )
     parser.add_argument(
         "--codec-device",
@@ -108,8 +109,8 @@ def main() -> None:
     parser.add_argument(
         "--codec-precision",
         choices=["fp32", "bf16"],
-        default="fp32",
-        help="Codec precision for weights/compute.",
+        default=None,
+        help="Codec precision for weights/compute (default: bf16 on GB10, fp32 elsewhere).",
     )
     parser.add_argument(
         "--codec-deterministic-encode",
@@ -417,6 +418,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.model_precision is None:
+        args.model_precision = list_available_runtime_precisions(args.model_device)[0]
+    if args.codec_precision is None:
+        args.codec_precision = list_available_runtime_precisions(args.codec_device)[0]
+
     checkpoint_path = _resolve_checkpoint_path(args)
 
     runtime = InferenceRuntime.from_key(
@@ -442,9 +448,7 @@ def main() -> None:
         or args.ref_latents is not None
         or args.ref_embed is not None
     ):
-        parser.error(
-            "speaker-conditioned checkpoints require one reference option or --no-ref."
-        )
+        parser.error("speaker-conditioned checkpoints require one reference option or --no-ref.")
     use_speaker_for_request = bool(
         runtime.model_cfg.use_speaker_condition_resolved and not args.no_ref
     )

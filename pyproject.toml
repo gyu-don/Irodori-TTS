@@ -7,7 +7,8 @@ license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
     "dacvae",
-    "datasets>=3.0.0",
+    "datasets>=3.0.0,<4; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "datasets>=3.0.0; sys_platform != 'linux' or platform_machine != 'aarch64'",
     "gradio>=5.0.0",
     "huggingface-hub>=0.34.0",
     "llvmlite>=0.40.0",
@@ -20,7 +21,7 @@ dependencies = [
     "silentcipher @ git+https://github.com/SesameAILabs/silentcipher.git@d46d7d0893a583d8968ab3a6626e2289faec9152",
     "torch>=2.10.0",
     "torchaudio>=2.10.0",
-    "torchcodec>=0.10.0,<0.11.0",
+    "torchcodec>=0.10.0,<0.11.0; sys_platform != 'linux' or platform_machine != 'aarch64'",
     "transformers>=5.12.1,<6",
     "tqdm>=4.67.3",
     "wandb>=0.17.0",
@@ -28,23 +29,28 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dgx-spark = [
+    "torch>=2.10.0,<2.11.0",
+    "torchaudio>=2.10.0,<2.11.0",
+    "torchao>=0.16.0,<0.17.0",
+]
 cpu = [
     "torch>=2.10.0,<2.11.0",
     "torchao>=0.16.0,<0.17.0",
     "torchaudio>=2.10.0,<2.11.0",
-    "torchcodec>=0.10.0,<0.11.0",
+    "torchcodec>=0.10.0,<0.11.0; sys_platform != 'linux' or platform_machine != 'aarch64'",
 ]
 cu128 = [
     "torch>=2.10.0,<2.11.0",
     "torchao>=0.16.0,<0.17.0",
     "torchaudio>=2.10.0,<2.11.0",
-    "torchcodec>=0.10.0,<0.11.0",
+    "torchcodec>=0.10.0,<0.11.0; sys_platform != 'linux' or platform_machine != 'aarch64'",
 ]
 rocm = [
     "torch>=2.10.0,<2.11.0",
     "torchao>=0.16.0,<0.17.0",
     "torchaudio>=2.10.0,<2.11.0",
-    "torchcodec>=0.10.0,<0.11.0",
+    "torchcodec>=0.10.0,<0.11.0; sys_platform != 'linux' or platform_machine != 'aarch64'",
     "pytorch-triton-rocm>=3.5.1; sys_platform == 'linux'",
     "triton-rocm>=3.6.0; sys_platform == 'linux'",
 ]
@@ -62,6 +68,7 @@ dev = [
 [tool.uv]
 conflicts = [
     [
+        { extra = "dgx-spark" },
         { extra = "cpu" },
         { extra = "cu128" },
         { extra = "rocm" },
@@ -71,12 +78,14 @@ conflicts = [
 
 [tool.uv.sources]
 torch = [
+    { index = "pytorch-cu130", extra = "dgx-spark", marker = "sys_platform == 'linux'" },
     { index = "pytorch-cpu", extra = "cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { index = "pytorch-cu128", extra = "cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { index = "pytorch-rocm", extra = "rocm", marker = "sys_platform == 'linux'" },
     { index = "pytorch-xpu", extra = "xpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 torchaudio = [
+    { index = "pytorch-cu130", extra = "dgx-spark", marker = "sys_platform == 'linux'" },
     { index = "pytorch-cpu", extra = "cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { index = "pytorch-cu128", extra = "cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { index = "pytorch-rocm", extra = "rocm", marker = "sys_platform == 'linux'" },
@@ -92,6 +101,11 @@ triton-xpu = [
     { index = "pytorch-xpu", extra = "xpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 dacvae = { git = "https://github.com/facebookresearch/dacvae" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
 [[tool.uv.index]]
 name = "pytorch-cpu"

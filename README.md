@@ -87,6 +87,18 @@ path. This was validated with AMD GPU inference.
 
 ## Quick Start
 
+### DGX Spark (GB10 / ARM64)
+
+This branch provides a CUDA 13 backend for DGX Spark:
+
+```bash
+uv sync --extra dgx-spark
+```
+
+Use `uv run --extra dgx-spark ...` or `uv run --no-sync ...` afterwards to
+preserve the selected backend. See [the DGX Spark notes](docs/dgx-spark.md)
+for compatibility details, measured performance, and model choices.
+
 ### Simple Inference
 
 ```bash
